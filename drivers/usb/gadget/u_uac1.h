@@ -36,6 +36,8 @@ struct gaudio_snd_dev {
 	int				format;
 	int				channels;
 	int				rate;
+	int				volume;
+	int				mute;
 };
 
 struct gaudio {

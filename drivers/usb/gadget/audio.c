@@ -9,15 +9,15 @@
  * Licensed under the GPL-2 or later.
  */
 
-/* #define VERBOSE_DEBUG */
+#define VERBOSE_DEBUG
 
 #include <linux/kernel.h>
 #include <linux/utsname.h>
 
 
 
-#define DRIVER_DESC		"Linux USB Audio Gadget"
-#define DRIVER_VERSION		"Dec 18, 2008"
+#define DRIVER_DESC		"Nexus Q USB Audio Interface"
+#define DRIVER_VERSION		"Aug 18, 2014"
 
 /*-------------------------------------------------------------------------*/
 
@@ -94,11 +94,13 @@ static int __init audio_do_config(struct usb_configuration *c)
 {
 	/* FIXME alloc iConfiguration string, set it in c->strings */
 
+    
 	if (gadget_is_otg(c->cdev->gadget)) {
 		c->descriptors = otg_desc;
 		c->bmAttributes |= USB_CONFIG_ATT_WAKEUP;
 	}
-
+    
+    
 	audio_bind_config(c);
 
 	return 0;
