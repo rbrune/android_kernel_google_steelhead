@@ -179,6 +179,7 @@ static size_t u_audio_playback(struct gaudio *card, void *buf, size_t count)
 	ssize_t result;
 	snd_pcm_sframes_t frames;
     unsigned char regvol = 0xff;
+    int retries = 0;
 
 try_again:
 	if (runtime->status->state == SNDRV_PCM_STATE_XRUN ||
@@ -193,6 +194,7 @@ try_again:
 	}
 
     /* try volume change*/
+    
     if (snd->mute != mute_control.data[UAC__CUR]) {
         INFO(snd->card, "mute: 0x%x\n", mute_control.data[UAC__CUR]);
         snd->mute = mute_control.data[UAC__CUR];
@@ -207,7 +209,8 @@ try_again:
         snd_pcm_kernel_ioctl(substream, 0x400141f9, &regvol);
         snd->volume = volume_control.data[UAC__CUR];
     } 
-
+    
+    
 	frames = bytes_to_frames(runtime, count);
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
@@ -215,6 +218,11 @@ try_again:
 	if (result != frames) {
 		ERROR(card, "Playback error: %d\n", (int)result);
 		set_fs(old_fs);
+        retries += 1;
+        if (retries > 10){
+            ERROR(card, "Too many playback retries: %d\n", retries);
+            return 0;
+        }
 		goto try_again;
 	}
 	set_fs(old_fs);

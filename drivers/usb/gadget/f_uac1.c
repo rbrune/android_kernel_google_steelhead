@@ -25,8 +25,9 @@ static int req_count = 256;
 module_param(req_count, int, S_IRUGO);
 MODULE_PARM_DESC(req_count, "ISO OUT endpoint request count");
 
-/*static int audio_buf_size = 48000; */
-static int audio_buf_size = 32000;
+static int audio_buf_size = 1440; 
+//static int audio_buf_size = 2000; 
+/*static int audio_buf_size = 24000; */
 module_param(audio_buf_size, int, S_IRUGO);
 MODULE_PARM_DESC(audio_buf_size, "Audio buffer size");
 
@@ -225,7 +226,7 @@ static struct uac_iso_endpoint_descriptor as_iso_out_desc __initdata = {
 	.bDescriptorType =	USB_DT_CS_ENDPOINT,
 	.bDescriptorSubtype =	UAC_EP_GENERAL,
 	.bmAttributes = 	0,
-	.bLockDelayUnits =	2,
+	.bLockDelayUnits =	1,
 	.wLockDelay =		__constant_cpu_to_le16(1),
 };
 
@@ -313,19 +314,21 @@ static void f_audio_playback_work(struct work_struct *data)
 	struct f_audio *audio = container_of(data, struct f_audio,
 					playback_work);
 	struct f_audio_buf *play_buf;
-
-	spin_lock_irq(&audio->lock);
-	if (list_empty(&audio->play_queue)) {
-		spin_unlock_irq(&audio->lock);
-		return;
-	}
-	play_buf = list_first_entry(&audio->play_queue,
-			struct f_audio_buf, list);
-	list_del(&play_buf->list);
-	spin_unlock_irq(&audio->lock);
-
-	u_audio_playback(&audio->card, play_buf->buf, play_buf->actual);
-	f_audio_buffer_free(play_buf);
+    
+    while (1) {
+        spin_lock_irq(&audio->lock);
+        if (list_empty(&audio->play_queue)) {
+            spin_unlock_irq(&audio->lock);
+            return;
+        }
+        play_buf = list_first_entry(&audio->play_queue,
+                struct f_audio_buf, list);
+        list_del(&play_buf->list);
+        spin_unlock_irq(&audio->lock);
+    
+        u_audio_playback(&audio->card, play_buf->buf, play_buf->actual);
+        f_audio_buffer_free(play_buf);
+    }
 }
 
 static int f_audio_out_ep_complete(struct usb_ep *ep, struct usb_request *req)
@@ -337,19 +340,29 @@ static int f_audio_out_ep_complete(struct usb_ep *ep, struct usb_request *req)
 
 	if (!copy_buf)
 		return -EINVAL;
-
+    
+    
 	/* Copy buffer is full, add it to the play_queue */
-	if (audio_buf_size - copy_buf->actual < req->actual) {
+    if (audio_buf_size - copy_buf->actual < req->actual) {
 		list_add_tail(&copy_buf->list, &audio->play_queue);
 		schedule_work(&audio->playback_work);
 		copy_buf = f_audio_buffer_alloc(audio_buf_size);
 		if (IS_ERR(copy_buf))
 			return -ENOMEM;
 	}
+    
+
 
 	memcpy(copy_buf->buf + copy_buf->actual, req->buf, req->actual);
 	copy_buf->actual += req->actual;
 	audio->copy_buf = copy_buf;
+    
+    /*
+    if (audio->copy_buf->actual > 2000) {
+        u_audio_playback(&audio->card, audio->copy_buf->buf, audio->copy_buf->actual);
+        audio->copy_buf->actual = 0;
+    }
+    */
 
 	err = usb_ep_queue(ep, req, GFP_ATOMIC);
 	if (err)
@@ -782,16 +795,21 @@ int __init control_selector_init(struct f_audio *audio)
     
 	mute_control.data[UAC__CUR] = 0x00;
     
-	volume_control.data[UAC__CUR] = 0x0000;
-	volume_control.data[UAC__MIN] = 0x8000;
-	volume_control.data[UAC__MAX] = 0x7FFF;
-	volume_control.data[UAC__RES] = 0x000A;
+	//volume_control.data[UAC__CUR] = 0x0000;
+	//volume_control.data[UAC__MIN] = 0x8000;
+	//volume_control.data[UAC__MAX] = 0x7FFF;
+	//volume_control.data[UAC__RES] = 0x000A;
     
 	
+	//volume_control.data[UAC__CUR] = (signed short)-14336;
+	//volume_control.data[UAC__MIN] = (signed short)-16384;
+	//volume_control.data[UAC__MAX] = (signed short)16384;
+	//volume_control.data[UAC__RES] = (signed short)1024;
+
 	volume_control.data[UAC__CUR] = (signed short)-14336;
 	volume_control.data[UAC__MIN] = (signed short)-16384;
-	volume_control.data[UAC__MAX] = (signed short)16384;
-	volume_control.data[UAC__RES] = (signed short)1024;
+	volume_control.data[UAC__MAX] = (signed short)3041;
+	volume_control.data[UAC__RES] = (signed short)259;
 	
 
 	return 0;
