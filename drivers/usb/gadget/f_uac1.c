@@ -13,19 +13,21 @@
 #include <linux/kernel.h>
 #include <linux/device.h>
 #include <linux/atomic.h>
+#include <linux/jiffies.h>
+#include <linux/timer.h>
 
 #include "u_uac1.h"
 
-#define OUT_EP_MAX_PACKET_SIZE	512
+#define OUT_EP_MAX_PACKET_SIZE	240
 static int req_buf_size = OUT_EP_MAX_PACKET_SIZE;
 module_param(req_buf_size, int, S_IRUGO);
 MODULE_PARM_DESC(req_buf_size, "ISO OUT endpoint request buffer size");
 
-static int req_count = 256;
+static int req_count = 384;
 module_param(req_count, int, S_IRUGO);
 MODULE_PARM_DESC(req_count, "ISO OUT endpoint request count");
 
-static int audio_buf_size = 1440; 
+static int audio_buf_size = 480; 
 //static int audio_buf_size = 2000; 
 /*static int audio_buf_size = 24000; */
 module_param(audio_buf_size, int, S_IRUGO);
@@ -294,8 +296,13 @@ struct f_audio {
 	spinlock_t			lock;
 	struct f_audio_buf *copy_buf;
 	struct work_struct playback_work;
+    struct work_struct playback_work2;
 	struct list_head play_queue;
-
+    
+    unsigned long last_w;
+    unsigned long last_r;
+    
+    
 	/* Control Set command */
 	struct list_head cs;
 	u8 set_cmd;
@@ -309,16 +316,36 @@ static inline struct f_audio *func_to_audio(struct usb_function *f)
 
 /*-------------------------------------------------------------------------*/
 
+static void f_audio_playback_work2(struct work_struct *data)
+{
+	struct f_audio *audio = container_of(data, struct f_audio,
+					playback_work2);
+    schedule_work(&audio->playback_work);
+}
+
 static void f_audio_playback_work(struct work_struct *data)
 {
 	struct f_audio *audio = container_of(data, struct f_audio,
 					playback_work);
 	struct f_audio_buf *play_buf;
     
+    unsigned long now;
+    
+    now = jiffies;
+    
+    if (jiffies_to_msecs(now - audio->last_r) > 80) {
+        if (jiffies_to_msecs(now - audio->last_w) < 20) {
+            schedule_work(&audio->playback_work2);
+            return;
+        }
+    }
+    
+    
     while (1) {
         spin_lock_irq(&audio->lock);
         if (list_empty(&audio->play_queue)) {
             spin_unlock_irq(&audio->lock);
+            schedule_work(&audio->playback_work2);
             return;
         }
         play_buf = list_first_entry(&audio->play_queue,
@@ -328,6 +355,8 @@ static void f_audio_playback_work(struct work_struct *data)
     
         u_audio_playback(&audio->card, play_buf->buf, play_buf->actual);
         f_audio_buffer_free(play_buf);
+        
+        audio->last_r = jiffies;
     }
 }
 
@@ -337,33 +366,31 @@ static int f_audio_out_ep_complete(struct usb_ep *ep, struct usb_request *req)
 	struct usb_composite_dev *cdev = audio->card.func.config->cdev;
 	struct f_audio_buf *copy_buf = audio->copy_buf;
 	int err;
-
+    
+    
 	if (!copy_buf)
 		return -EINVAL;
     
     
 	/* Copy buffer is full, add it to the play_queue */
     if (audio_buf_size - copy_buf->actual < req->actual) {
-		list_add_tail(&copy_buf->list, &audio->play_queue);
-		schedule_work(&audio->playback_work);
+		if (list_empty(&audio->play_queue)) {
+            audio->last_w = jiffies;
+        }
+        list_add_tail(&copy_buf->list, &audio->play_queue);
+        schedule_work(&audio->playback_work);
 		copy_buf = f_audio_buffer_alloc(audio_buf_size);
 		if (IS_ERR(copy_buf))
 			return -ENOMEM;
-	}
+	} 
     
-
-
+    
 	memcpy(copy_buf->buf + copy_buf->actual, req->buf, req->actual);
 	copy_buf->actual += req->actual;
 	audio->copy_buf = copy_buf;
     
-    /*
-    if (audio->copy_buf->actual > 2000) {
-        u_audio_playback(&audio->card, audio->copy_buf->buf, audio->copy_buf->actual);
-        audio->copy_buf->actual = 0;
-    }
-    */
-
+    //schedule_work(&audio->playback_work);
+    
 	err = usb_ep_queue(ep, req, GFP_ATOMIC);
 	if (err)
 		ERROR(cdev, "%s queue req: %d\n", ep->name, err);
@@ -646,8 +673,8 @@ static int f_audio_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 		} else {
 			struct f_audio_buf *copy_buf = audio->copy_buf;
 			if (copy_buf) {
-				list_add_tail(&copy_buf->list,
-						&audio->play_queue);
+				//list_add_tail(&copy_buf->list,
+				//		&audio->play_queue);
 				schedule_work(&audio->playback_work);
 			}
 		}
@@ -837,6 +864,9 @@ int __init audio_bind_config(struct usb_configuration *c)
 
 	INIT_LIST_HEAD(&audio->play_queue);
 	spin_lock_init(&audio->lock);
+    
+    audio->last_r = 0;
+    audio->last_w = 0;
 
 	/* set up ASLA audio devices */
 	status = gaudio_setup(&audio->card);
@@ -853,6 +883,7 @@ int __init audio_bind_config(struct usb_configuration *c)
 	control_selector_init(audio);
 
 	INIT_WORK(&audio->playback_work, f_audio_playback_work);
+    INIT_WORK(&audio->playback_work2, f_audio_playback_work2);
 
 	status = usb_add_function(c, &audio->card.func);
 	if (status)
