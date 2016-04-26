@@ -169,7 +169,7 @@ static int playback_default_hw_params(struct gaudio_snd_dev *snd)
  */
 static struct usb_audio_control volume_control;
 static struct usb_audio_control mute_control;
- 
+
 static size_t u_audio_playback(struct gaudio *card, void *buf, size_t count)
 {
 	struct gaudio_snd_dev	*snd = &card->playback;
@@ -194,23 +194,23 @@ try_again:
 	}
 
     /* try volume change*/
-    
+
     if (snd->mute != mute_control.data[UAC__CUR]) {
         INFO(snd->card, "mute: 0x%x\n", mute_control.data[UAC__CUR]);
         snd->mute = mute_control.data[UAC__CUR];
         if(snd->mute) volume_control.data[UAC__CUR] = volume_control.data[UAC__MIN];
         else volume_control.data[UAC__CUR] = (volume_control.data[UAC__MIN] + volume_control.data[UAC__MAX])/4;
     }
-    
+
     if (snd->volume != volume_control.data[UAC__CUR]) {
         /*regvol = (unsigned char)(0xAA - volume_control.data[UAC__CUR]);*/
         INFO(snd->card, "volume: 0x%x\n", volume_control.data[UAC__CUR]);
-        regvol = (unsigned char)(0xAA - ((signed short)volume_control.data[UAC__CUR] + 16384)/259);
+        regvol = (unsigned char)(0xAA - ((signed short)volume_control.data[UAC__CUR] + 16384)/163);
         snd_pcm_kernel_ioctl(substream, 0x400141f9, &regvol);
         snd->volume = volume_control.data[UAC__CUR];
-    } 
-    
-    
+    }
+
+
 	frames = bytes_to_frames(runtime, count);
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
@@ -356,4 +356,3 @@ void gaudio_cleanup(void)
 		the_card = NULL;
 	}
 }
-
